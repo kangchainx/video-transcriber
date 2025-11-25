@@ -1,0 +1,27 @@
+# Python 缓存与虚拟环境
+__pycache__/
+*.py[cod]
+.Python
+.venv/
+venv/
+
+# 环境变量文件
+.env
+
+# 编辑器与系统文件
+.DS_Store
+*.swp
+*.swo
+*.log
+
+# 构建/临时目录
+build/
+dist/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# 项目临时数据
+tmp/
+*.tmp
+cookies/
