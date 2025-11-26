@@ -19,7 +19,7 @@ class CreateTaskRequest(BaseModel):
     )
     device: Optional[str] = Field(None, description="推理设备，默认 cpu")
     compute_type: Optional[str] = Field(None, description="计算精度，默认 int8")
-    user_id: uuid.UUID = Field(..., alias="userId", description="由网关传入的用户 ID")
+    user_id: Optional[uuid.UUID] = Field(None, alias="userId", description="由网关传入的用户 ID（或从签名头获取）")
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -58,4 +58,3 @@ class SSEMessage(BaseModel):
     progress: float
     message: Optional[str] = None
     result_files: Optional[List[TaskDetailResponse]] = None
-

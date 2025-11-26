@@ -1,7 +1,8 @@
 """Minio 封装：上传转写结果文件并返回路径/URL。"""
 
-import os
+from datetime import timedelta
 from typing import Optional, Tuple
+from urllib.parse import urlparse
 
 from minio import Minio
 from minio.error import S3Error
@@ -60,6 +61,51 @@ def build_public_url(object_key: str) -> Optional[str]:
         return None
     base = str(settings.MINIO_PUBLIC_BASE_URL)
     return f"{base.rstrip('/')}/{object_key}"
+
+
+def presign_url(object_key: str, expires_seconds: int = 3600) -> str:
+    """生成带时效的下载地址。"""
+
+    return _client.presigned_get_object(
+        bucket_name=settings.MINIO_BUCKET,
+        object_name=object_key,
+        expires=timedelta(seconds=expires_seconds),
+    )
+
+
+def presign_from_path(stored_path: str, expires_seconds: int = 3600) -> str:
+    """
+    强制对存储路径生成临时签名 URL。
+    - 若是 http(s) 链接，尝试解析出 object_key 后签名；解析失败则直接使用路径部分
+    - 若是对象键，直接签名
+    """
+
+    object_key = stored_path
+    if stored_path.startswith(("http://", "https://")):
+        parsed = urlparse(stored_path)
+        path = parsed.path.lstrip("/")
+        bucket_prefix = settings.MINIO_BUCKET.rstrip("/") + "/"
+        if path.startswith(bucket_prefix):
+            object_key = path[len(bucket_prefix) :]
+        else:
+            object_key = path
+    return presign_url(object_key, expires_seconds)
+
+
+def resolve_file_url(stored_path: str, expires_seconds: int = 3600) -> str:
+    """
+    根据存储路径返回可直接下载的 URL。
+    - 若已是 http(s) 开头，直接返回
+    - 若配置了公共域名，返回拼接 URL
+    - 否则生成临时签名 URL
+    """
+
+    if stored_path.startswith("http://") or stored_path.startswith("https://"):
+        return stored_path
+    public = build_public_url(stored_path)
+    if public:
+        return public
+    return presign_url(stored_path, expires_seconds)
 
 
 def check_minio() -> Tuple[bool, str]:

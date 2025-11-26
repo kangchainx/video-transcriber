@@ -34,6 +34,10 @@ class TaskManager:
     def __init__(self) -> None:
         # task_id -> 订阅的队列列表
         self._subscribers: Dict[uuid.UUID, List[asyncio.Queue[SSEMessage]]] = defaultdict(list)
+        # 本地存储策略下的临时结果（不入库）
+        self._local_results: Dict[uuid.UUID, TaskDetailResponse] = {}
+        # 记录上一次日志状态，避免重复打印
+        self._last_log_state: Dict[uuid.UUID, tuple] = {}
 
     def subscribe(self, task_id: uuid.UUID) -> asyncio.Queue[SSEMessage]:
         """创建一个新的 SSE 订阅队列。"""
@@ -47,6 +51,15 @@ class TaskManager:
 
         for queue in self._subscribers.get(task_id, []):
             queue.put_nowait(message)
+
+    @staticmethod
+    def _sanitize_filename(name: str) -> str:
+        """简单清洗文件名，避免特殊字符导致路径问题。"""
+
+        invalid = r'\\/:*?"<>|'
+        cleaned = "".join("_" if ch in invalid else ch for ch in name)
+        cleaned = cleaned.strip().replace(" ", "_")
+        return cleaned or "transcript"
 
     def _cleanup_subscribers(self, task_id: uuid.UUID) -> None:
         """任务结束后清理订阅队列，避免内存泄漏。"""
@@ -64,13 +77,34 @@ class TaskManager:
 
         task_id = task.id
         temp_root = settings.TEMP_DIR / str(task_id)
+        loop = asyncio.get_running_loop()
+
+        last_bucket = -1
+
+        def _notify(message: str, progress: Optional[float] = None) -> None:
+            """在线程中调用，转到事件循环更新状态（此处仅下载阶段触发一次）。"""
+
+            nonlocal last_bucket
+            if progress is not None:
+                # 仅在第一次有进度时推送，避免频繁
+                if last_bucket != -1:
+                    return
+                last_bucket = 0
+            try:
+                asyncio.run_coroutine_threadsafe(
+                    self._update_status(task_id, progress=progress, message=message), loop
+                )
+            except Exception:
+                logger.exception("任务 %s 进度通知失败", task_id)
+
         try:
             await self._update_status(task_id, status="processing", progress=5, message="开始处理")
 
             # 1) 下载媒体
-            download_path = await asyncio.to_thread(
-                downloader.download_media, str(task.video_source_url), temp_root, task.video_source
+            download_path, media_title = await asyncio.to_thread(
+                downloader.download_media, str(task.video_source_url), temp_root, task.video_source, _notify
             )
+            logger.info("任务 %s 下载完成，源标题：%s", task_id, media_title)
             await self._update_status(task_id, progress=25, message="下载完成，开始抽取音频")
 
             # 2) 抽取音频
@@ -93,32 +127,44 @@ class TaskManager:
             # 4) 渲染并上传
             output_format = req.output_format or settings.DEFAULT_OUTPUT_FORMAT
             rendered = transcription.render_output(text, output_format)
-            filename = f"transcript.{ 'md' if output_format == 'markdown' else 'txt' }"
+            base_name = self._sanitize_filename(media_title)
+            filename = f"{base_name}.{ 'md' if output_format == 'markdown' else 'txt' }"
             output_path = temp_root / filename
             output_path.write_text(rendered, encoding="utf-8")
 
-            object_key = await asyncio.to_thread(
-                storage.upload_result_file, str(output_path), str(task_id), filename
-            )
-            public_url = storage.build_public_url(object_key)
+            if settings.FILE_STORAGE_STRATEGY.lower() == "local":
+                # 仅保存在本地，不上传、不入库
+                local_detail = TaskDetailResponse(
+                    file_name=filename,
+                    file_path=str(output_path),
+                    file_size=output_path.stat().st_size,
+                    file_format=output_format,
+                    detected_language=detected_lang,
+                )
+                self._local_results[task_id] = local_detail
+            else:
+                object_key = await asyncio.to_thread(
+                    storage.upload_result_file, str(output_path), str(task_id), filename
+                )
+                public_url = storage.build_public_url(object_key)
 
-            # 5) 写入文件记录
-            await self._insert_detail(
-                task_id=task.id,
-                user_id=task.user_id,
-                file_name=filename,
-                file_path=public_url or object_key,
-                file_size=output_path.stat().st_size,
-                file_format=output_format,
-                detected_language=detected_lang,
-            )
+                # 5) 写入文件记录
+                await self._insert_detail(
+                    task_id=task.id,
+                    user_id=task.user_id,
+                    file_name=filename,
+                    file_path=public_url or object_key,
+                    file_size=output_path.stat().st_size,
+                    file_format=output_format,
+                    detected_language=detected_lang,
+                )
 
             await self._update_status(task_id, status="completed", progress=100, message="任务完成")
         except Exception as exc:  # noqa: BLE001
             await self._update_status(task_id, status="failed", message=str(exc))
         finally:
             # 清理临时目录
-            if temp_root.exists():
+            if settings.CLEAN_TMP_FILE and temp_root.exists():
                 shutil.rmtree(temp_root, ignore_errors=True)
             self._cleanup_subscribers(task_id)
 
@@ -154,21 +200,38 @@ class TaskManager:
         if status == "failed" and not msg_message:
             msg_message = db_task.error_message
 
+        result_files = None
+        if details:
+            result_files = []
+            for d in details:
+                mdl = TaskDetailResponse.model_validate(d)
+                # minio 存储才需要转换为可访问地址
+                if settings.FILE_STORAGE_STRATEGY.lower() == "minio":
+                    mdl.file_path = storage.resolve_file_url(mdl.file_path)
+                result_files.append(mdl)
+        # 若使用本地存储且已生成结果，则附加
+        if settings.FILE_STORAGE_STRATEGY.lower() == "local" and task_id in self._local_results:
+            result_files = result_files or []
+            result_files.append(self._local_results[task_id])
+
         msg = SSEMessage(
             task_id=db_task.id,
             status=db_task.status,  # type: ignore[arg-type]
             progress=float(db_task.progress or 0),
             message=msg_message,
-            result_files=[TaskDetailResponse.model_validate(d) for d in details] if details else None,
+            result_files=result_files,
         )
         # 控制台打印，便于调试
-        logger.info(
-            "任务状态更新 task_id=%s status=%s progress=%.1f message=%s",
-            task_id,
-            db_task.status,
-            float(db_task.progress or 0),
-            message,
-        )
+        log_state = (db_task.status, float(db_task.progress or 0), msg_message)
+        if self._last_log_state.get(task_id) != log_state:
+            self._last_log_state[task_id] = log_state
+            logger.info(
+                "任务状态更新 task_id=%s status=%s progress=%.1f message=%s",
+                task_id,
+                db_task.status,
+                float(db_task.progress or 0),
+                msg_message,
+            )
         self._publish(task_id, msg)
 
     async def _insert_detail(
@@ -203,7 +266,11 @@ class TaskManager:
 
         stmt = select(VideoTSDetail).where(VideoTSDetail.task_id == task_id)
         result = await session.execute(stmt)
-        return list(result.scalars().all())
+        details = list(result.scalars().all())
+        # 本地存储时，附加内存中的结果
+        if settings.FILE_STORAGE_STRATEGY.lower() == "local" and task_id in self._local_results:
+            details.append(self._local_results[task_id])  # type: ignore[list-item]
+        return details
 
     async def fetch_task_with_details(self, task_id: uuid.UUID) -> Optional[Tuple[VideoTSTask, List[VideoTSDetail]]]:
         """供接口查询任务和文件信息。"""
@@ -225,15 +292,23 @@ class TaskManager:
         current = await self.fetch_task_with_details(task_id)
         if current:
             task, details = current
+            init_files = None
+            if details:
+                init_files = []
+                for d in details:
+                    mdl = TaskDetailResponse.model_validate(d)
+                    mdl.file_path = storage.resolve_file_url(mdl.file_path)
+                    init_files.append(mdl)
+
             init_msg = task.error_message if task.status == "failed" else "当前状态"
-            init_msg = SSEMessage(
+            init_event = SSEMessage(
                 task_id=task.id,
                 status=task.status,  # type: ignore[arg-type]
                 progress=float(task.progress or 0),
                 message=init_msg,
-                result_files=[TaskDetailResponse.model_validate(d) for d in details] if details else None,
+                result_files=init_files,
             )
-            yield f"data: {init_msg.model_dump_json()}\n\n"
+            yield f"data: {init_event.model_dump_json()}\n\n"
             if task.status in {"completed", "failed"}:
                 self._cleanup_subscribers(task_id)
                 return

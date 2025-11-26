@@ -60,7 +60,10 @@ async def preflight() -> None:
     settings = get_settings()
 
     db_ok, db_msg = await _check_db()
-    minio_ok, minio_msg = check_minio()
+    if settings.FILE_STORAGE_STRATEGY.lower() == "minio":
+        minio_ok, minio_msg = check_minio()
+    else:
+        minio_ok, minio_msg = True, "已跳过 Minio 检查（文件存储策略=local）"
     ffmpeg_ok, ffmpeg_msg = _check_binary("ffmpeg", settings.FFMPEG_BIN)
     ytdlp_ok, ytdlp_msg = _check_binary("yt-dlp", settings.YTDLP_BIN)
     proxy_ok = settings.PROXY_ENABLED and bool(settings.PROXY_URL)

@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     MINIO_PUBLIC_BASE_URL: Optional[AnyHttpUrl] = Field(
         None, description="对外可访问的 Minio 网关或 CDN 域名，拼接文件下载地址"
     )
+    FILE_STORAGE_STRATEGY: str = Field("minio", description="文件存储策略：minio 或 local")
 
     # 代理配置
     PROXY_ENABLED: bool = Field(False, description="是否开启代理下载（用于中国大陆访问 YouTube 等）")
@@ -56,6 +57,12 @@ class Settings(BaseSettings):
         "txt", description="默认输出格式，支持 txt 或 markdown"
     )
     TEMP_DIR: Path = Field(default=Path("tmp"), description="临时文件目录（默认放在项目根目录 tmp 下）")
+    CLEAN_TMP_FILE: bool = Field(True, description="任务结束后是否清理临时文件")
+
+    # 认证配置
+    AUTH_ENABLED: bool = Field(False, description="是否启用接口签名校验")
+    AUTH_SHARED_SECRET: Optional[str] = Field(None, description="签名密钥，AUTH_ENABLED 为 true 时必填")
+    AUTH_TOLERANCE_SECONDS: int = Field(300, description="时间戳容忍秒数，默认 5 分钟")
 
     # 可执行程序路径（若需要自定义）
     FFMPEG_BIN: str = Field("ffmpeg", description="ffmpeg 可执行命令名称或绝对路径")
