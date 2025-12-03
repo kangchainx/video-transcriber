@@ -104,11 +104,22 @@ def _download_youtube(url: str, workdir: Path, progress_cb: Optional[ProgressCb]
         extractor_args["youtube"]["po_token"] = [po_token]
 
     cookies_file = None
+    cookies_from_browser = None
     if settings.YTDLP_COOKIES_FILE:
         cf = Path(settings.YTDLP_COOKIES_FILE).expanduser()
         if not cf.exists():
             raise RuntimeError(f"指定的 cookies 文件不存在：{cf}")
         cookies_file = str(cf)
+    if settings.YTDLP_COOKIES_FROM_BROWSER:
+        if cookies_file:
+            raise RuntimeError("请不要同时设置 YTDLP_COOKIES_FILE 与 YTDLP_COOKIES_FROM_BROWSER")
+        browser_spec = settings.YTDLP_COOKIES_FROM_BROWSER.split(":", 1)
+        browser = browser_spec[0].strip()
+        profile = browser_spec[1].strip() if len(browser_spec) > 1 and browser_spec[1].strip() else None
+        if not browser:
+            raise RuntimeError("YTDLP_COOKIES_FROM_BROWSER 需指定浏览器名称，如 chrome 或 chrome:Default")
+        # cookiesfrombrowser 形参为 (browser, profile, keyring, container)
+        cookies_from_browser = (browser, profile, None, None)
 
     def _hook(d):
         if progress_cb and d.get("status") == "downloading":
@@ -133,10 +144,17 @@ def _download_youtube(url: str, workdir: Path, progress_cb: Optional[ProgressCb]
         "proxy": proxy,
         # 可配置的客户端与 po_token
         "extractor_args": extractor_args,
-        # 可选 cookies
-        "cookiefile": cookies_file,
+        # 显式启用 Node.js + EJS 组件（自动更新），提高 YouTube 解析的稳定性
+        "js_runtimes": {"node": {}},  # yt-dlp 新版要求为 {runtime: config}
+        "remote_components": ["ejs:github"],
         "progress_hooks": [_hook],
     }
+
+    # 可选 cookies
+    if cookies_file:
+        ydl_opts["cookiefile"] = cookies_file
+    if cookies_from_browser:
+        ydl_opts["cookiesfrombrowser"] = cookies_from_browser
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
