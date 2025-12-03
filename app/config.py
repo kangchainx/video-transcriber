@@ -70,6 +70,10 @@ class Settings(BaseSettings):
     YTDLP_COOKIES_FILE: Optional[str] = Field(
         None, description="yt-dlp cookies 文件路径（可选），用于访问需登录的视频"
     )
+    YTDLP_COOKIES_FROM_BROWSER: Optional[str] = Field(
+        None,
+        description="从浏览器读取 cookies，格式 browser[:profile]，如 chrome:Default（优先于 YTDLP_COOKIES_FILE）",
+    )
 
     def proxy_dict(self) -> Dict[str, str]:
         """构造 requests/yt-dlp/ffmpeg 可用的代理配置。"""
