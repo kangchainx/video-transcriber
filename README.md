@@ -96,3 +96,32 @@ curl -X POST http://127.0.0.1:8000/api/tasks \
 - `.env` 中留空项会被自动解析为 None，减少校验报错。
 - YouTube 需代理时请提前验证 `PROXY_URL`；如设 `YOUTUBE_PLAYER_CLIENT=android` 建议同时提供 `YOUTUBE_PO_TOKEN`。
 - 生产部署请关闭 `--reload`，确保 ffmpeg/yt-dlp 可用、Minio 桶存在或本地存储目录可写。
+
+## Docker 构建与运行
+### 仅构建镜像
+在项目根目录执行：
+```bash
+docker build -t video-transcriber:latest .
+```
+代理环境可改为（将地址替换为你的代理）：
+```bash
+docker build \
+  --build-arg HTTP_PROXY=http://127.0.0.1:7890 \
+  --build-arg HTTPS_PROXY=http://127.0.0.1:7890 \
+  -t video-transcriber:latest .
+```
+
+### 直接运行（需要自备 Postgres/Minio）
+```bash
+docker run --rm -p 8000:8000 --env-file .env video-transcriber:latest
+```
+注意：`.env` 里的 `DATABASE_URL`、`MINIO_ENDPOINT` 等如果写的是 `localhost`，容器内通常不可用；请改成真实可达地址或使用下方 compose。
+
+### 用 docker compose 一键启动（推荐）
+项目已提供 `docker-compose.yml`（含 Postgres + Minio + app）：
+```bash
+docker compose up --build
+```
+- 代理环境：先在当前 shell 导出 `HTTP_PROXY/HTTPS_PROXY/NO_PROXY`，compose 会自动透传到 build 与运行时环境
+- 服务：API `http://127.0.0.1:8000`，Minio `http://127.0.0.1:9000`，Minio Console `http://127.0.0.1:9001`
+- 首次使用请在 Minio Console 创建桶 `yvap`（或修改 compose 里的 `MINIO_BUCKET`）
