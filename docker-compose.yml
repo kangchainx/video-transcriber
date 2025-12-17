@@ -1,0 +1,76 @@
+services:
+  app:
+    build:
+      context: .
+      args:
+        HTTP_PROXY: ${HTTP_PROXY}
+        HTTPS_PROXY: ${HTTPS_PROXY}
+        NO_PROXY: ${NO_PROXY}
+    container_name: video-transcriber-app
+    ports:
+      - "8000:8000"
+    environment:
+      # 运行时代理（用于 yt-dlp remote_components 拉取/以及其他出网）
+      HTTP_PROXY: ${HTTP_PROXY}
+      HTTPS_PROXY: ${HTTPS_PROXY}
+      NO_PROXY: ${NO_PROXY}
+      DATABASE_URL: postgresql+asyncpg://postgres:password@db:5432/video_transcriber
+      # Minio（容器内通过服务名访问）
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: videots
+      MINIO_SECRET_KEY: videots12345678
+      MINIO_BUCKET: yvap
+      MINIO_REGION: us-east-1
+      MINIO_SECURE: "false"
+      MINIO_PREFIX: videos
+      MINIO_PUBLIC_BASE_URL: http://localhost:9000
+      # 模型/推理配置（CPU 默认）
+      FASTER_WHISPER_MODEL: tiny
+      FASTER_WHISPER_DEVICE: cpu
+      FASTER_WHISPER_COMPUTE_TYPE: int8
+      DEFAULT_OUTPUT_FORMAT: txt
+      # 运行与路径
+      TEMP_DIR: /app/tmp
+      CLEAN_TMP_FILE: "true"
+      FILE_STORAGE_STRATEGY: minio
+      # 可执行路径
+      FFMPEG_BIN: ffmpeg
+      YTDLP_BIN: yt-dlp
+      # 认证/代理默认关闭
+      AUTH_ENABLED: "false"
+      PROXY_ENABLED: "false"
+      YOUTUBE_PLAYER_CLIENT: default
+    depends_on:
+      - db
+      - minio
+    volumes:
+      - ./tmp:/app/tmp
+
+  db:
+    image: postgres:16
+    container_name: video-transcriber-db
+    environment:
+      POSTGRES_DB: video_transcriber
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  minio:
+    image: minio/minio:latest
+    container_name: video-transcriber-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: videots
+      MINIO_ROOT_PASSWORD: videots12345678
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - miniodata:/data
+
+volumes:
+  pgdata:
+  miniodata:
