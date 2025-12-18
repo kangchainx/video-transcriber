@@ -106,10 +106,13 @@ docker build -t video-transcriber:latest .
 代理环境可改为（将地址替换为你的代理）：
 ```bash
 docker build \
-  --build-arg HTTP_PROXY=http://127.0.0.1:7890 \
-  --build-arg HTTPS_PROXY=http://127.0.0.1:7890 \
+  --build-arg HTTP_PROXY=http://host.docker.internal:7890 \
+  --build-arg HTTPS_PROXY=http://host.docker.internal:7890 \
   -t video-transcriber:latest .
 ```
+说明：
+- `127.0.0.1` 在容器内指向容器自身，通常不可用于访问宿主机代理；Docker Desktop（macOS/Windows）请使用 `host.docker.internal`。
+- 若你的代理客户端只监听 `127.0.0.1`，需要开启“Allow LAN/允许局域网连接/监听 0.0.0.0”，否则容器无法连接到代理端口。
 
 ### 直接运行（需要自备 Postgres/Minio）
 ```bash
@@ -122,6 +125,6 @@ docker run --rm -p 8000:8000 --env-file .env video-transcriber:latest
 ```bash
 docker compose up --build
 ```
-- 代理环境：先在当前 shell 导出 `HTTP_PROXY/HTTPS_PROXY/NO_PROXY`，compose 会自动透传到 build 与运行时环境
+- 代理环境：先在当前 shell 导出 `HTTP_PROXY/HTTPS_PROXY/NO_PROXY`（如 `http://host.docker.internal:7890`），compose 会自动透传到 build 与运行时环境
 - 服务：API `http://127.0.0.1:8000`，Minio `http://127.0.0.1:9000`，Minio Console `http://127.0.0.1:9001`
 - 首次使用请在 Minio Console 创建桶 `yvap`（或修改 compose 里的 `MINIO_BUCKET`）
