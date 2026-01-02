@@ -8,7 +8,7 @@
 - 端到端链路：yt-dlp/HTTP 下载 → ffmpeg 抽音 → faster-whisper 推理 → txt/markdown 渲染与存储。
 - 多来源输入：普通 URL 与 YouTube 自动识别，支持代理与 cookies 访问受限视频。
 - 实时可观测：REST 查询 + SSE 流式进度，失败信息直达调用方。
-- 结果可托管：Minio/本地存储二选一，提供签名下载 URL，文件路径写入数据库。
+- 结果托管：Minio/本地存储二选一，提供签名下载 URL，文件路径写入数据库。
 - 可控资源：自选模型、设备与 compute type，按需清理临时文件。
 - 安全可选：HMAC 请求签名开关，时间戳容忍窗口可配置。
 
