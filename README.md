@@ -117,4 +117,3 @@ docker build \
 ```bash
 docker run --rm -p 8000:8000 --env-file .env video-transcriber:latest
 ```
-注意：`.env` 里的 `DATABASE_URL`、`MINIO_ENDPOINT` 等如果写的是 `localhost`，容器内通常不可用
